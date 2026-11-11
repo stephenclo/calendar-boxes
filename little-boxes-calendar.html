@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Year</title>
+<style>
+  body { font-family: Helvetica, Arial, sans-serif; margin: 0; padding: 16px; background: #fafafa; color: #2b2b2b; }
+  .barre { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  input[type=number] { width: 90px; padding: 6px; font-size: 16px; }
+  button, select { padding: 7px 14px; font-size: 15px; cursor: pointer; }
+  .barre { flex-wrap: wrap; }
+  .statut { font-size: 13px; color: #8a4b00; }
+  #calendrier { overflow-x: auto; }
+  #calendrier svg { display: block; max-width: none; box-shadow: 0 1px 6px rgba(0,0,0,.15); }
+  @page { size: A5 portrait; margin: 0; }
+  @media print {
+    body { padding: 0; background: #fff; }
+    .barre { display: none; }
+    #calendrier svg { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="barre">
+  <label for="annee">Année</label>
+  <input type="number" id="annee" min="1" max="9999">
+  <label for="vacances">Vacances scolaires</label>
+  <select id="vacances">
+    <option value="">Aucune</option>
+    <option value="Zone A">Zone A</option>
+    <option value="Zone B" selected>Zone B</option>
+    <option value="Zone C">Zone C</option>
+    <option value="Corse">Corse</option>
+  </select>
+  <label for="feries">Jours fériés</label>
+  <select id="feries">
+    <option value="">Aucun</option>
+    <option value="metropole" selected>Métropole</option>
+    <option value="alsace-moselle">Alsace-Moselle</option>
+    <option value="guadeloupe">Guadeloupe</option>
+    <option value="guyane">Guyane</option>
+    <option value="la-reunion">La Réunion</option>
+    <option value="martinique">Martinique</option>
+    <option value="mayotte">Mayotte</option>
+  </select>
+  <button id="telecharger">Télécharger le SVG</button>
+  <span class="statut" id="statut"></span>
+</div>
+<div id="calendrier"></div>
+
+<script>
+/**
+ * Génère un SVG "Year in Pixels" au format A5 portrait (148 x 210 mm).
+ * Une colonne par mois, un jour par case : numéro du jour + initiale du jour de la semaine.
+ * Le viewBox est exprimé en millimètres : 1 unité = 1 mm.
+ */
+function genererPixelYear(annee, opts = {}) {
+  const {
+    largeur = 148,        // A5 portrait (mm)
+    hauteur = 210,
+    marge = 8,            // marges gauche/droite (mm)
+    margeHaut = 0,        // marge du haut (mm)
+    margeBas = 6,         // marge du bas (mm)
+    hauteurTitre = 14,    // hauteur du titre (année)
+    hauteurEntete = 7,    // hauteur du libellé de mois
+    espace = 0.765,       // écart entre cases (mm) : 0,5 mm + 1 px (≈ 0,265 mm)
+    carre = false,        // true : cases carrées (grille centrée) ; false : cases étirées pour remplir la page
+    couleurJour = "#fff",
+    couleurVacances = "#edf3f7", // vacances scolaires
+    couleurFerie = "#e8dff0",    // jours fériés (prioritaire sur les vacances)
+    feries = {},                 // { "AAAA-MM-JJ": "Nom du jour férié" }
+    vacances = {},               // { "AAAA-MM-JJ": "Nom des vacances" }
+    couleurAujourdhui = "#e5484d",          // jour courant
+    aujourdhui = new Date().toLocaleDateString("sv-SE"), // "AAAA-MM-JJ" du jour courant (null pour désactiver)
+    libelleVacances = "Vacances scolaires", // texte de la légende des vacances
+    libelleFerie = "Jour férié",            // texte de la légende des jours fériés
+    libelleAujourdhui = "Aujourd'hui",      // texte de la légende du jour courant
+    couleurTrait = "#000",
+    couleurTexte = "#2b2b2b",
+    police = "Helvetica, Arial, sans-serif",
+  } = opts;
+
+  const MOIS = ["Janv", "Févr", "Mars", "Avril", "Mai", "Juin",
+                "Juill", "Août", "Sept", "Oct", "Nov", "Déc"];
+  // Index = Date.getDay() (0 = dimanche)
+  const INITIALES = ["D", "L", "Ma", "Me", "J", "V", "S"];
+
+  // --- Calcul de la grille pour qu'elle tienne dans la page ---
+  const yGrille = margeHaut + hauteurTitre + hauteurEntete;      // début de la grille des jours
+  const hGrille = hauteur - margeBas - yGrille;                  // hauteur disponible pour la grille
+  const caseH = (hGrille - 30 * espace) / 31;                    // 31 lignes (mois le plus long) : la grille occupe toute la hauteur
+  const pasY = caseH + espace;
+  let pasX = (largeur - 2 * marge) / 12;                         // 12 colonnes
+  let caseW = pasX - espace;
+  let x0 = marge;
+  if (carre) {
+    caseW = caseH;
+    pasX = caseW + espace;
+    x0 = (largeur - (12 * pasX - espace)) / 2;                   // grille centrée horizontalement
+  }
+  const xDroite = x0 + 12 * pasX - espace;                       // bord droit de la grille
+
+  const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const parts = [];
+  parts.push(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${largeur}mm" height="${hauteur}mm" ` +
+    `viewBox="0 0 ${largeur} ${hauteur}" font-family="${police}">`,
+    `<rect width="100%" height="100%" fill="#ffffff"/>`,
+    // Titre : année alignée à droite
+    `<text x="${xDroite}" y="${margeHaut + hauteurTitre - 2}" text-anchor="end" opacity="0.9" ` +
+    `font-size="${hauteurTitre * 0.4}" font-weight="bold" fill="${couleurTexte}">${annee}</text>`
+  );
+
+  // Légende : à gauche, sur la ligne du titre
+  const tLeg = 2.4;
+  const yLeg = margeHaut + hauteurTitre - 2;
+  // Les couleurs de la légende sont celles utilisées pour les cases (mêmes variables)
+  const legende = [];
+  if (Object.keys(vacances).length) legende.push({ couleur: couleurVacances, texte: libelleVacances });
+  if (Object.keys(feries).length) legende.push({ couleur: couleurFerie, texte: libelleFerie });
+  if (aujourdhui && aujourdhui.startsWith(`${annee}-`)) legende.push({ couleur: couleurAujourdhui, texte: libelleAujourdhui });
+  let xLeg = x0;
+  for (const { couleur, texte } of legende) {
+    parts.push(
+      `<rect x="${xLeg}" y="${yLeg - tLeg}" width="${tLeg}" height="${tLeg}" rx="0.3" ` +
+      `fill="${couleur}" stroke="${couleurTrait}" stroke-width="0.15"/>`,
+      `<text x="${xLeg + tLeg + 1}" y="${yLeg}" font-size="${tLeg}" fill="${couleurTexte}">${esc(texte)}</text>`
+    );
+    xLeg += tLeg + 1 + texte.length * tLeg * 0.5 + 4;
+  }
+
+  for (let m = 0; m < 12; m++) {
+    const x = x0 + m * pasX;
+
+    // Libellé du mois : aligné à gauche, première lettre plus grande
+    const libelle = MOIS[m];
+    parts.push(
+      `<text x="${x + 0.2}" y="${yGrille - 1.5}" text-anchor="start" opacity="0.9" ` +
+      `font-size="${(caseH * 0.65).toFixed(2)}" font-weight="bold" fill="${couleurTexte}">` +
+      `<tspan font-size="${(caseH * 0.75).toFixed(2)}" opacity="0.9">${libelle[0]}</tspan>` +
+      `${libelle.slice(1)}</text>`
+    );
+
+    // Jour 0 du mois suivant = dernier jour du mois courant (gère les bissextiles)
+    const nbJours = new Date(annee, m + 1, 0).getDate();
+
+    for (let j = 1; j <= nbJours; j++) {
+      const y = yGrille + (j - 1) * pasY;
+      const joursem = new Date(annee, m, j).getDay();
+      const weekend = joursem === 0 || joursem === 6;
+      const dateIso = `${annee}-${String(m + 1).padStart(2, "0")}-${String(j).padStart(2, "0")}`;
+      const ferie = feries[dateIso];
+      const vac = vacances[dateIso];
+      const estAujourdhui = dateIso === aujourdhui;
+      const fond = estAujourdhui ? couleurAujourdhui : ferie ? couleurFerie : vac ? couleurVacances : couleurJour;
+      const couleurNum = estAujourdhui ? "#fff" : couleurTexte;  // texte blanc sur fond rouge
+      const opaciteNum = estAujourdhui ? 1 : 0.6;
+      const graisse = weekend ? "bold" : "normal"; // week-end : numéro et initiale en gras
+      const info = [ferie, vac].filter(Boolean).join(" — ");
+
+      parts.push(
+        `<g>` +
+        (info ? `<title>${esc(info)}</title>` : "") +
+        `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${caseW.toFixed(2)}" height="${caseH.toFixed(2)}" rx="0.6" ` +
+        `fill="${fond}" stroke="${couleurTrait}" stroke-width="0.15"/>` +
+        // Numéro du jour (gauche)
+        `<text x="${(x + 0.9).toFixed(2)}" y="${(y + caseH / 2).toFixed(2)}" dominant-baseline="central" ` +
+        `font-size="${(caseH * 0.5).toFixed(2)}" font-weight="${graisse}" fill="${couleurNum}" opacity="${opaciteNum}">${j}</text>` +
+        // Initiale du jour de la semaine (droite)
+        `<text x="${(x + caseW - 0.9).toFixed(2)}" y="${(y + caseH / 2).toFixed(2)}" text-anchor="end" dominant-baseline="central" ` +
+        `font-size="${(caseH * 0.42).toFixed(2)}" font-weight="${graisse}" fill="${couleurNum}" opacity="${opaciteNum}">` +
+        `${INITIALES[joursem]}</text>` +
+        `</g>`
+      );
+    }
+  }
+
+  parts.push(`</svg>`);
+  return parts.join("\n");
+}
+
+// --- API : jours fériés et vacances scolaires --------------------------------
+const API_FERIES = "https://calendrier.api.gouv.fr/jours-feries";
+const API_VACANCES =
+  "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records";
+
+/**
+ * Jours fériés d'une année (API calendrier.api.gouv.fr).
+ * zone : "metropole", "alsace-moselle", "guadeloupe", "guyane", "la-reunion", "martinique", "mayotte"...
+ * @returns {Promise<Object>} { "AAAA-MM-JJ": "Nom" }
+ */
+async function chargerJoursFeries(annee, zone = "metropole") {
+  const rep = await fetch(`${API_FERIES}/${zone}/${annee}.json`);
+  if (!rep.ok) throw new Error(`HTTP ${rep.status}`);
+  return rep.json();
+}
+
+/** Récupère toutes les pages (100 lignes max par requête) de l'API calendrier scolaire. */
+async function recupererPages(base) {
+  const lignes = [];
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const params = new URLSearchParams(base);
+    params.set("limit", "100");
+    params.set("offset", String(offset));
+    const rep = await fetch(`${API_VACANCES}?${params}`);
+    if (!rep.ok) throw new Error(`HTTP ${rep.status}`);
+    const json = await rep.json();
+    lignes.push(...json.results);
+    if (json.results.length < 100) break;
+  }
+  return lignes;
+}
+
+/**
+ * Vacances scolaires d'une année civile (API data.education.gouv.fr).
+ * zone : "Zone A", "Zone B", "Zone C" ou "Corse".
+ * Le départ a lieu après la classe du dernier jour, la reprise le matin de la date de fin :
+ * les jours de vacances vont de start_date (incluse) à end_date (exclue).
+ * @returns {Promise<Object>} { "AAAA-MM-JJ": "Nom des vacances" }
+ */
+async function chargerVacances(annee, zone = "Zone B") {
+  // Les dates de l'API sont en UTC (ex. 22h00Z = lendemain à Paris) : conversion en date locale
+  const jourLocal = (d) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(new Date(d));
+
+  // Une année civile chevauche deux années scolaires : une requête par année scolaire
+  const requetes = [`${annee - 1}-${annee}`, `${annee}-${annee + 1}`].map((anneeScolaire) =>
+    recupererPages(new URLSearchParams([
+      ["select", "description,start_date,end_date,population"],
+      ["refine", `zones:${zone}`],
+      ["refine", `annee_scolaire:${anneeScolaire}`],
+    ]))
+  );
+  const lignes = (await Promise.all(requetes)).flat();
+
+  const vues = new Set();   // une même période est répétée pour chaque académie
+  const jours = {};
+  for (const r of lignes) {
+    if (r.population === "Enseignants" || !r.start_date || !r.end_date) continue;
+    const debut = jourLocal(r.start_date);
+    const fin = jourLocal(r.end_date);
+    const cle = `${debut}|${fin}|${r.description}`;
+    if (vues.has(cle)) continue;
+    vues.add(cle);
+    for (const d = new Date(`${debut}T00:00:00Z`); ; d.setUTCDate(d.getUTCDate() + 1)) {
+      const iso = d.toISOString().slice(0, 10);
+      if (iso >= fin) break;
+      if (iso.startsWith(`${annee}-`)) jours[iso] = r.description;
+    }
+  }
+  return jours;
+}
+
+/** Secours hors ligne : jours fériés de métropole calculés localement (Pâques : Meeus/Jones/Butcher). */
+function joursFeriesLocal(annee) {
+  const a = annee % 19, b = Math.floor(annee / 100), c = annee % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const mm = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mois = Math.floor((h + l - 7 * mm + 114) / 31);
+  const jour = ((h + l - 7 * mm + 114) % 31) + 1;
+  const iso = (dt) => dt.toISOString().slice(0, 10);
+  const paques = new Date(Date.UTC(annee, mois - 1, jour));
+  const plus = (n) => iso(new Date(paques.getTime() + n * 86400000));
+  return {
+    [`${annee}-01-01`]: "Jour de l'An",
+    [plus(1)]: "Lundi de Pâques",
+    [`${annee}-05-01`]: "Fête du Travail",
+    [`${annee}-05-08`]: "Victoire 1945",
+    [plus(39)]: "Ascension",
+    [plus(50)]: "Lundi de Pentecôte",
+    [`${annee}-07-14`]: "Fête nationale",
+    [`${annee}-08-15`]: "Assomption",
+    [`${annee}-11-01`]: "Toussaint",
+    [`${annee}-11-11`]: "Armistice 1918",
+    [`${annee}-12-25`]: "Noël",
+  };
+}
+
+// --- Interface -------------------------------------------------------------
+const champAnnee = document.getElementById("annee");
+const selVacances = document.getElementById("vacances");
+const selFeries = document.getElementById("feries");
+const statut = document.getElementById("statut");
+const conteneur = document.getElementById("calendrier");
+champAnnee.value = new Date().getFullYear();
+
+let donnees = { feries: {}, vacances: {} };
+let jeton = 0; // ignore les réponses d'une requête devenue obsolète
+
+function options() {
+  return {
+    feries: donnees.feries,
+    vacances: donnees.vacances,
+    libelleVacances: `Vacances scolaires (${selVacances.value})`,
+  };
+}
+
+function afficher() {
+  const annee = parseInt(champAnnee.value, 10);
+  if (!annee) return;
+  conteneur.innerHTML = genererPixelYear(annee, options());
+}
+
+async function actualiserDonnees() {
+  const annee = parseInt(champAnnee.value, 10);
+  if (!annee) return;
+  const moi = ++jeton;
+  const messages = [];
+  let feries = {};
+  let vacances = {};
+  statut.textContent = "Chargement…";
+
+  if (selFeries.value) {
+    try {
+      feries = await chargerJoursFeries(annee, selFeries.value);
+    } catch (e) {
+      if (selFeries.value === "metropole") {
+        feries = joursFeriesLocal(annee);
+        messages.push("API des jours fériés indisponible : calcul local.");
+      } else {
+        messages.push("API des jours fériés indisponible.");
+      }
+    }
+  }
+  if (selVacances.value) {
+    try {
+      vacances = await chargerVacances(annee, selVacances.value);
+      if (!Object.keys(vacances).length) messages.push(`Aucune vacance scolaire trouvée pour ${annee}.`);
+    } catch (e) {
+      messages.push("API des vacances scolaires indisponible.");
+    }
+  }
+
+  if (moi !== jeton) return;
+  donnees = { feries, vacances };
+  statut.textContent = messages.join(" ");
+  afficher();
+}
+
+document.getElementById("telecharger").addEventListener("click", () => {
+  const annee = parseInt(champAnnee.value, 10);
+  // Pas de coloration du jour courant (ni de légende associée) dans le fichier téléchargé
+  const blob = new Blob([genererPixelYear(annee, { ...options(), aujourdhui: null })], { type: "image/svg+xml" });
+  const lien = document.createElement("a");
+  lien.href = URL.createObjectURL(blob);
+  lien.download = `pixel-year-${annee}.svg`;
+  lien.click();
+  URL.revokeObjectURL(lien.href);
+});
+
+let minuterie;
+champAnnee.addEventListener("input", () => {
+  afficher();
+  clearTimeout(minuterie);
+  minuterie = setTimeout(actualiserDonnees, 400);
+});
+selVacances.addEventListener("change", actualiserDonnees);
+selFeries.addEventListener("change", actualiserDonnees);
+
+afficher();
+actualiserDonnees();
+</script>
+</body>
+</html>
