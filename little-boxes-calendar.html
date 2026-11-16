@@ -337,7 +337,7 @@ function genererPixelYear(annee, opts = {}) {
       const estAujourdhui = dateIso === aujourdhui;
       const fond = estAujourdhui ? couleurAujourdhui : ferie ? couleurFerie : vac ? couleurVacances : couleurJour;
       const couleurNum = estAujourdhui ? "#fff" : couleurTexte;  // texte blanc sur fond rouge
-      const opaciteNum = estAujourdhui ? 1 : 0.6;
+      const opaciteNum = estAujourdhui ? 1 : 0.9;
       const graisse = weekend ? "bold" : "normal"; // week-end : numéro et initiale en gras
       const info = [ferie, vac].filter(Boolean).join(" — ");
 
